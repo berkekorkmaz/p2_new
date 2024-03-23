@@ -3,10 +3,7 @@
 #include <ucontext.h>
 #include <signal.h>
 #include <unistd.h>
-
-#define STACK_SIZE 1024*64
-#define TSL_ANY 0
-#define TSL_ERROR -1
+#include "tsl.h"
 
 typedef struct tsl_thread {
     int tid;
@@ -77,10 +74,11 @@ void schedule() {
 }
 
 // Current thread calls exit
-void tsl_exit() {
+int tsl_exit() {
     current_thread->state = 2; // Mark as terminated
     schedule(); // Switch to the next thread
     // This function does not return as the current thread is terminated
+    return 0;
 }
 
 typedef void (*thread_start_routine)(void *);
@@ -105,7 +103,7 @@ void thread_start(void (*start_routine)(void *), void *arg) {
     tsl_thread_t *thread = current_thread; // Assuming current_thread points to the newly created thread
 
     // Allocate a stack for the new thread
-    void *stack = malloc(STACK_SIZE);
+    void *stack = malloc(TSL_STACKSIZE);
     if (!stack) {
         perror("Failed to allocate stack");
         exit(1);
@@ -124,7 +122,7 @@ void thread_start(void (*start_routine)(void *), void *arg) {
     getcontext(&thread->context);
     thread->context.uc_link = 0;
     thread->context.uc_stack.ss_sp = stack;
-    thread->context.uc_stack.ss_size = STACK_SIZE;
+    thread->context.uc_stack.ss_size = TSL_STACKSIZE;
     thread->context.uc_stack.ss_flags = 0;
     makecontext(&thread->context, (void (*)())thread_start_func, 1, info);
 }
@@ -143,8 +141,8 @@ int tsl_create_thread(void (*start_routine)(void *), void *arg) {
 
     getcontext(&new_thread->context);
     new_thread->context.uc_link = 0;
-    new_thread->context.uc_stack.ss_sp = malloc(STACK_SIZE);
-    new_thread->context.uc_stack.ss_size = STACK_SIZE;
+    new_thread->context.uc_stack.ss_sp = malloc(TSL_STACKSIZE);
+    new_thread->context.uc_stack.ss_size = TSL_STACKSIZE;
     new_thread->context.uc_stack.ss_flags = 0;
     if (new_thread->context.uc_stack.ss_sp == 0) {
         free(new_thread);
@@ -227,7 +225,7 @@ void print_message(void *arg) {
     tsl_exit(); // Terminate the current thread
 }
 
-int main() {
+/*int main() {
     tsl_init(0); // Initialize threading library
 
     printf("Main Thread: Creating child threads.\n");
@@ -252,4 +250,4 @@ int main() {
     }
 
     return 0;
-}
+}*/
