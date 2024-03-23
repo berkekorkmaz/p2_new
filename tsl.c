@@ -166,6 +166,7 @@ int tsl_create_thread(void (*start_routine)(void *), void *arg) {
 // Yield the CPU from the calling thread to another thread
 int tsl_yield(int tid) {
     schedule(); // Switch to the next thread in round-robin order
+    printf("Thread %d is running.\n", current_thread->tid);
     return current_thread ? current_thread->tid : TSL_ERROR;
 }
 
@@ -216,45 +217,39 @@ void thread_start_stub() {
     tsl_exit();
 }
 
-// Example thread start function
 void print_message(void *arg) {
     char *message = (char *)arg;
     for (int i = 0; i < 5; ++i) {
         printf("%s\n", message);
-        tsl_yield(TSL_ANY); // Yield after printing
+        sleep(1); // Simulate work
+        tsl_yield(TSL_ANY); // Yield execution to the next thread
     }
-    tsl_exit(); // Terminate the thread
+    tsl_exit(); // Terminate the current thread
 }
 
 int main() {
-    // Initialize the threading library
-    if (tsl_init(0) != 0) {
-        fprintf(stderr, "Failed to initialize threading library\n");
-        return 1;
-    }
+    tsl_init(0); // Initialize threading library
 
-    // Create a few threads
-    int tid1 = tsl_create_thread(print_message, "Thread 1: Hello from thread!");
-    int tid2 = tsl_create_thread(print_message, "Thread 2: Hello from thread!");
-    int tid3 = tsl_create_thread(print_message, "Thread 3: Hello from thread!");
+    printf("Main Thread: Creating child threads.\n");
 
-    if (tid1 == TSL_ERROR || tid2 == TSL_ERROR || tid3 == TSL_ERROR) {
-        fprintf(stderr, "Failed to create threads\n");
-        return 1;
-    }
+    tsl_create_thread(print_message, "Child Thread 1: Running.");
+    tsl_create_thread(print_message, "Child Thread 2: Running.");
+    tsl_create_thread(print_message, "Child Thread 3: Running.");
 
-    // Main thread also prints messages
+    // Simulate main thread work and yield to child threads
     for (int i = 0; i < 5; ++i) {
-        printf("Main Thread: Hello from the main thread!\n");
-        tsl_yield(TSL_ANY); // Yield after printing
+        printf("Main Thread: Running.\n");
+        sleep(1); // Simulate work
+        tsl_yield(TSL_ANY);
     }
 
-    // Join threads
-    if (tsl_join(tid1) == TSL_ERROR || tsl_join(tid2) == TSL_ERROR || tsl_join(tid3) == TSL_ERROR) {
-        fprintf(stderr, "Failed to join threads\n");
-        return 1;
+    // Assuming we have a mechanism to wait for all threads to complete.
+    // In a real implementation, you'd need something like tsl_join()
+    // to ensure main doesn't exit early.
+    printf("Main Thread: Finished creating threads. Waiting for them to complete.\n");
+    while (1) {
+        sleep(1); // In a real scenario, replace this with a proper wait/check mechanism.
     }
 
-    printf("All threads have completed.\n");
     return 0;
 }
