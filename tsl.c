@@ -145,7 +145,6 @@ typedef struct thread_start_info {
     void *arg;
 } thread_start_info_t;
 
-// Actual start routine that gets called by makecontext
 void thread_start_func(thread_start_info_t *info) {
     // Call the provided start routine with the provided argument
     info->start_routine(info->arg);
@@ -180,7 +179,6 @@ void thread_start(void (*start_routine)(void *), void *arg) {
     thread->context.uc_stack.ss_sp = stack;
     thread->context.uc_stack.ss_size = TSL_STACKSIZE;
     thread->context.uc_stack.ss_flags = 0;
-    makecontext(&thread->context, (void (*)())thread_start_func, 1, info);
 }
 
 
@@ -259,8 +257,6 @@ int tsl_create_thread(void (*start_routine)(void *), void *arg) {
         free(new_thread);
         return TSL_ERROR;
     }
-
-    makecontext(&new_thread->context, (void (*)())thread_start, 2, start_routine, arg);
 
     new_thread->tid = next_tid++;
     new_thread->start_routine = start_routine;
