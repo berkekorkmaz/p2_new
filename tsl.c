@@ -78,7 +78,7 @@ int tsl_exit() {
     current_thread->state = 2; // Mark as terminated
     schedule(); // Switch to the next thread
     // This function does not return as the current thread is terminated
-    return 0;
+    //return 0;
 }
 
 typedef void (*thread_start_routine)(void *);
@@ -129,10 +129,57 @@ void thread_start(void (*start_routine)(void *), void *arg) {
 
 
 // Initialize the threading library
+//int tsl_init(int salg) {
+//    // Salg is not used in this simplified version, could be used to select scheduling algorithms
+//    return 0; // Success
+//}
+
+// Initialize the threading library
 int tsl_init(int salg) {
     // Salg is not used in this simplified version, could be used to select scheduling algorithms
+    // For now, we just initialize the main thread
+    tsl_thread_t *main_thread = (tsl_thread_t *)malloc(sizeof(tsl_thread_t));
+    if (!main_thread) return TSL_ERROR;
+
+    // Initialize main thread context
+    getcontext(&main_thread->context);
+    main_thread->context.uc_link = 0;
+    main_thread->context.uc_stack.ss_sp = malloc(TSL_STACKSIZE);
+    main_thread->context.uc_stack.ss_size = TSL_STACKSIZE;
+    main_thread->context.uc_stack.ss_flags = 0;
+    if (!main_thread->context.uc_stack.ss_sp) {
+        free(main_thread);
+        return TSL_ERROR;
+    }
+
+    main_thread->tid = 0; // Main thread ID is 0
+    main_thread->start_routine = NULL; // Main thread doesn't have a start routine
+    main_thread->arg = NULL; // Main thread doesn't have arguments
+    main_thread->state = 0; // Main thread is running
+    main_thread->next = NULL;
+
+    current_thread = main_thread; // Set current thread to main thread
+
+    // Save main thread context for later use
+    if (getcontext(&main_context) == -1) {
+        perror("getcontext failed");
+        exit(EXIT_FAILURE);
+    }
+    main_context.uc_link = 0;
+    main_context.uc_stack.ss_sp = malloc(TSL_STACKSIZE);
+    main_context.uc_stack.ss_size = TSL_STACKSIZE;
+    main_context.uc_stack.ss_flags = 0;
+    if (!main_context.uc_stack.ss_sp) {
+        free(main_thread->context.uc_stack.ss_sp);
+        free(main_thread);
+        return TSL_ERROR;
+    }
+    main_context.uc_stack.ss_sp = main_thread->context.uc_stack.ss_sp;
+    main_context.uc_stack.ss_size = main_thread->context.uc_stack.ss_size;
+
     return 0; // Success
 }
+
 
 // Create a new thread
 int tsl_create_thread(void (*start_routine)(void *), void *arg) {
@@ -161,32 +208,93 @@ int tsl_create_thread(void (*start_routine)(void *), void *arg) {
     return new_thread->tid; // Return the new thread ID
 }
 
+// // Yield the CPU from the calling thread to another thread
+// int tsl_yield(int tid) {
+//     schedule(); // Switch to the next thread in round-robin order
+//     printf("Thread %d is running.\n", current_thread->tid);
+//     return current_thread ? current_thread->tid : TSL_ERROR;
+// }
 // Yield the CPU from the calling thread to another thread
 int tsl_yield(int tid) {
-    schedule(); // Switch to the next thread in round-robin order
-    printf("Thread %d is running.\n", current_thread->tid);
-    return current_thread ? current_thread->tid : TSL_ERROR;
+    tsl_thread_t *prev_thread = current_thread;
+
+    // If tid is TSL_ANY or tid is the same as the current thread, just schedule the next thread
+    if (tid == TSL_ANY || (current_thread && current_thread->tid == tid)) {
+        schedule();
+        return current_thread ? current_thread->tid : TSL_ERROR;
+    }
+
+    // Search for the thread with the specified tid
+    tsl_thread_t *target_thread = NULL;
+    for (tsl_thread_t *thread = thread_list; thread != NULL; thread = thread->next) {
+        if (thread->tid == tid) {
+            target_thread = thread;
+            break;
+        }
+    }
+
+    // If the target thread is found and it's in the ready state, perform context switch
+    if (target_thread && target_thread->state == 1) {
+        current_thread = target_thread;
+        if (swapcontext(&prev_thread->context, &current_thread->context) == -1) {
+            perror("swapcontext failed");
+            exit(EXIT_FAILURE);
+        }
+        return current_thread->tid;
+    }
+
+    // If tid is a positive integer but there is no ready thread with that tid, return error
+    return TSL_ERROR;
 }
 
+
+// int tsl_join(int tid) {
+//     tsl_thread_t *target = NULL;
+//     for (;;) {
+//         target = NULL;
+//         for (tsl_thread_t *thread = thread_list; thread != NULL; thread = thread->next) {
+//             if (thread->tid == tid) {
+//                 target = thread;
+//                 break;
+//             }
+//         }
+//         if (!target) return TSL_ERROR; // No thread with such tid
+//         if (target->state == 2) break; // Target thread has terminated
+//         tsl_yield(TSL_ANY); // Yield to allow other threads to run
+//     }
+//     // Cleanup
+//     free(target->context.uc_stack.ss_sp);
+//     free(target);
+//     return tid; // Return the tid of the terminated thread
+// }
+
 int tsl_join(int tid) {
-    tsl_thread_t *target = NULL;
-    for (;;) {
-        target = NULL;
-        for (tsl_thread_t *thread = thread_list; thread != NULL; thread = thread->next) {
-            if (thread->tid == tid) {
-                target = thread;
-                break;
-            }
+    // Find the target thread
+    tsl_thread_t *target_thread = NULL;
+    for (tsl_thread_t *thread = thread_list; thread != NULL; thread = thread->next) {
+        if (thread->tid == tid) {
+            target_thread = thread;
+            break;
         }
-        if (!target) return TSL_ERROR; // No thread with such tid
-        if (target->state == 2) break; // Target thread has terminated
+    }
+
+    // If the target thread doesn't exist or has already terminated, return error
+    if (!target_thread || target_thread->state == 2) {
+        return TSL_ERROR;
+    }
+
+    // Wait for the target thread to terminate
+    while (target_thread->state != 2) {
         tsl_yield(TSL_ANY); // Yield to allow other threads to run
     }
-    // Cleanup
-    free(target->context.uc_stack.ss_sp);
-    free(target);
+
+    // Cleanup resources
+    free(target_thread->context.uc_stack.ss_sp);
+    free(target_thread);
+
     return tid; // Return the tid of the terminated thread
 }
+
 
 int tsl_cancel(int tid) {
     for (tsl_thread_t **curr = &thread_list; *curr; curr = &(*curr)->next) {
@@ -219,35 +327,65 @@ void print_message(void *arg) {
     char *message = (char *)arg;
     for (int i = 0; i < 5; ++i) {
         printf("%s\n", message);
-        sleep(1); // Simulate work
+        //sleep(10); // Simulate work
         tsl_yield(TSL_ANY); // Yield execution to the next thread
     }
     tsl_exit(); // Terminate the current thread
 }
 
-/*int main() {
-    tsl_init(0); // Initialize threading library
+// int main() {
+//     tsl_init(0); // Initialize threading library
 
-    printf("Main Thread: Creating child threads.\n");
+//     printf("Main Thread: Creating child threads.\n");
 
-    tsl_create_thread(print_message, "Child Thread 1: Running.");
-    tsl_create_thread(print_message, "Child Thread 2: Running.");
-    tsl_create_thread(print_message, "Child Thread 3: Running.");
+//     tsl_create_thread(print_message, "Child Thread 1: Running.");
+//     tsl_create_thread(print_message, "Child Thread 2: Running.");
+//     tsl_create_thread(print_message, "Child Thread 3: Running.");
 
-    // Simulate main thread work and yield to child threads
-    for (int i = 0; i < 5; ++i) {
-        printf("Main Thread: Running.\n");
-        sleep(1); // Simulate work
-        tsl_yield(TSL_ANY);
-    }
+//     // Simulate main thread work and yield to child threads
+//     for (int i = 0; i < 5; ++i) {
+//         printf("Main Thread: Running.\n");
+//         sleep(1); // Simulate work
+//         tsl_yield(TSL_ANY);
+//     }
 
-    // Assuming we have a mechanism to wait for all threads to complete.
-    // In a real implementation, you'd need something like tsl_join()
-    // to ensure main doesn't exit early.
-    printf("Main Thread: Finished creating threads. Waiting for them to complete.\n");
-    while (1) {
-        sleep(1); // In a real scenario, replace this with a proper wait/check mechanism.
-    }
+//     // Assuming we have a mechanism to wait for all threads to complete.
+//     // In a real implementation, you'd need something like tsl_join()
+//     // to ensure main doesn't exit early.
+//     printf("Main Thread: Finished creating threads. Waiting for them to complete.\n");
+//     while (1) {
+//         sleep(1); // In a real scenario, replace this with a proper wait/check mechanism.
+//     }
 
-    return 0;
-}*/
+//     return 0;
+// }
+
+// int main() {
+//     tsl_init(0); // Initialize threading library
+
+//     printf("Main Thread: Creating child threads.\n");
+
+//     // Create child threads
+//     int tid1 = tsl_create_thread(print_message, "Child Thread 1: Running.");
+//     int tid2 = tsl_create_thread(print_message, "Child Thread 2: Running.");
+//     int tid3 = tsl_create_thread(print_message, "Child Thread 3: Running.");
+
+//     // Simulate main thread work and yield to child threads
+//     for (int i = 0; i < 5; ++i) {
+//         printf("Main Thread: Running.\n");
+//         //sleep(1); // Simulate work
+//         tsl_yield(TSL_ANY);
+//     }
+
+//     // Wait for each child thread to complete
+//     printf("Main Thread: Finished creating threads. Waiting for them to complete.\n");
+//     tsl_join(tid1);
+//     tsl_join(tid2);
+//     tsl_join(tid3);
+
+//     printf("Main Thread: All child threads have completed. Exiting.\n");
+
+//     tsl_exit();
+
+//     return 0;
+// }
