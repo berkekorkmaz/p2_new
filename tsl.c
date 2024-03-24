@@ -18,6 +18,7 @@ static tsl_thread_t *thread_list = NULL; // List of all threads
 static tsl_thread_t *current_thread = NULL; // Currently running thread
 static int next_tid = 1; // Next thread ID to assign
 static ucontext_t main_context; // Main thread context
+int currSchedAlgo = 1;
 
 // Finds and removes a terminated thread from the list, freeing its resources
 void cleanup_terminated_threads() {
@@ -36,6 +37,40 @@ void cleanup_terminated_threads() {
         }
         prev = thread;
         thread = thread->next;
+    }
+}
+
+void schedule_random() {
+    tsl_thread_t *prev_thread = current_thread;
+
+    // Attempt to save the current context and switch to the main context
+    if (prev_thread && swapcontext(&prev_thread->context, &main_context) == -1) {
+        perror("swapcontext failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Cleanup terminated threads and free their resources
+    cleanup_terminated_threads();
+
+    // If the current thread is not set or it's the last in the list, start from the beginning
+    if (!current_thread || !current_thread->next) {
+        current_thread = thread_list;
+    } else {
+        // Otherwise, move to the next thread in the list
+        current_thread = current_thread->next;
+    }
+
+    // Find the next thread that is ready to run
+    while (current_thread && current_thread->state != 1) { // Skip terminated threads
+        current_thread = current_thread->next ? current_thread->next : thread_list; // Wrap around if at the end
+    }
+
+    // If a runnable thread is found, switch to its context
+    if (current_thread) {
+        if (setcontext(&current_thread->context) == -1) {
+            perror("setcontext failed");
+            exit(EXIT_FAILURE);
+        }
     }
 }
 
@@ -76,7 +111,16 @@ void schedule() {
 // Current thread calls exit
 int tsl_exit() {
     current_thread->state = 2; // Mark as terminated
-    schedule(); // Switch to the next thread
+    if(currSchedAlgo == 1){
+            schedule();      // Switch to the next thread
+        }
+        else if(currSchedAlgo == 2){
+
+        }
+        else{
+            return TSL_ERROR;
+        }
+    
     // This function does not return as the current thread is terminated
     //return 0;
 }
@@ -136,6 +180,7 @@ void thread_start(void (*start_routine)(void *), void *arg) {
 
 // Initialize the threading library
 int tsl_init(int salg) {
+    currSchedAlgo = salg;
     // Salg is not used in this simplified version, could be used to select scheduling algorithms
     // For now, we just initialize the main thread
     tsl_thread_t *main_thread = (tsl_thread_t *)malloc(sizeof(tsl_thread_t));
@@ -220,7 +265,15 @@ int tsl_yield(int tid) {
 
     // If tid is TSL_ANY or tid is the same as the current thread, just schedule the next thread
     if (tid == TSL_ANY || (current_thread && current_thread->tid == tid)) {
-        schedule();
+        if(currSchedAlgo == 1){
+            schedule();
+        }
+        else if(currSchedAlgo == 2){
+
+        }
+        else{
+            return TSL_ERROR;
+        }
         return current_thread ? current_thread->tid : TSL_ERROR;
     }
 
